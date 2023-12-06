@@ -88,7 +88,7 @@ mod tests {
                 casm = true
 
                 [dependencies]
-                starknet = "2.3.1"
+                starknet = "2.4.0"
                 snforge_std = {{ path = "{}" }}
 
                 [[tool.snforge.fork]]

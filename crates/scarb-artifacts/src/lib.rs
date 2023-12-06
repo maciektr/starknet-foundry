@@ -266,7 +266,7 @@ mod tests {
                 casm = true
 
                 [dependencies]
-                starknet = "2.3.1"
+                starknet = "2.4.0"
                 snforge_std = {{ path = "{}" }}
 
                 [[tool.snforge.fork]]
@@ -336,7 +336,7 @@ mod tests {
                 version = "0.1.0"
 
                 [dependencies]
-                starknet = "2.3.1"
+                starknet = "2.4.0"
                 snforge_std = {{ path = "{}" }}
 
                 [[target.starknet-contract]]

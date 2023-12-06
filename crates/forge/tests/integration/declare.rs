@@ -14,11 +14,14 @@ fn simple_declare() {
         use starknet::ClassHashIntoFelt252;
         use snforge_std::declare;
 
-        #[test]
-        fn test_declare_simple() {
-            assert(1 == 1, 'simple check');
-            let contract = declare('HelloStarknet');
-            assert(contract.class_hash.into() != 0, 'proper class hash');
+        #[cfg(test)]
+        mod tests {
+            #[test]
+            fn test_declare_simple() {
+                assert(1 == 1, 'simple check');
+                let contract = declare('HelloStarknet');
+                assert(contract.class_hash.into() != 0, 'proper class hash');
+            }
         }
         "
         ),

@@ -157,7 +157,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: software-mansion/setup-scarb@v1.3.2
+      - name: Install Scarb
+        run: |
+          unzip build-x86_64-unknown-linux-gnu.zip
+          tar -xvzf scarb-v2.4.0-x86_64-unknown-linux-gnu.tar.gz
+          echo "$GITHUB_WORKSPACE/scarb-v2.4.0-x86_64-unknown-linux-gnu/bin" >> $GITHUB_PATH
 
       - name: Download artifacts
         uses: actions/download-artifact@v3
