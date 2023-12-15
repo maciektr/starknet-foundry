@@ -3,11 +3,8 @@ use crate::helpers::{
     fixtures::{create_test_provider, from_env},
 };
 use camino::Utf8PathBuf;
-use sncast::{
-    get_account,
-    helpers::constants::{WAIT_RETRY_INTERVAL, WAIT_TIMEOUT},
-};
-use sncast::{handle_wait_for_tx, parse_number, wait_for_tx, WaitForTx};
+use sncast::helpers::constants::{WAIT_RETRY_INTERVAL, WAIT_TIMEOUT};
+use sncast::{handle_wait_for_tx, parse_number, wait_for_tx, AccountInfo, WaitForTx};
 use starknet::contract::ContractFactory;
 use starknet::core::types::FieldElement;
 
@@ -30,12 +27,11 @@ async fn test_happy_path() {
 #[tokio::test]
 async fn test_rejected_transaction() {
     let provider = create_test_provider();
-    let account = get_account(
-        ACCOUNT,
-        &Utf8PathBuf::from(ACCOUNT_FILE_PATH),
-        &provider,
-        None,
+    let account = AccountInfo::for_accounts_file(
+        Some(ACCOUNT.to_string()),
+        Utf8PathBuf::from(ACCOUNT_FILE_PATH),
     )
+    .get_account(&provider)
     .await
     .expect("Could not get the account");
     let class_hash = from_env("CAST_MAP_CLASS_HASH").unwrap();

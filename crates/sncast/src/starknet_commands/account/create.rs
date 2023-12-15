@@ -1,13 +1,13 @@
 use crate::starknet_commands::account::{
     add_created_profile_to_configuration, prepare_account_json, write_account_to_accounts_file,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use camino::Utf8PathBuf;
 use clap::Args;
 use serde_json::json;
+use sncast::helpers::config::{AccountInfo, CastConfigBuilder};
 use sncast::helpers::constants::{CREATE_KEYSTORE_PASSWORD_ENV_VAR, OZ_CLASS_HASH};
 use sncast::helpers::response_structs::AccountCreateResponse;
-use sncast::helpers::scarb_utils::CastConfig;
 use sncast::{extract_or_generate_salt, get_chain_id, get_keystore_password, parse_number};
 use starknet::accounts::{AccountFactory, OpenZeppelinAccountFactory};
 use starknet::core::types::{FeeEstimate, FieldElement};
@@ -39,9 +39,8 @@ pub struct Create {
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     rpc_url: &str,
-    account: &str,
-    accounts_file: &Utf8PathBuf,
-    keystore: Option<Utf8PathBuf>,
+    account_info: &AccountInfo,
+    account_name: &str,
     provider: &JsonRpcClient<HttpTransport>,
     path_to_scarb_toml: Option<Utf8PathBuf>,
     chain_id: FieldElement,
@@ -65,27 +64,43 @@ pub async fn create(
             .context("Invalid address")?,
     )?;
 
-    if let Some(keystore) = keystore.clone() {
-        let account_path = Utf8PathBuf::from(&account);
-        if account_path == Utf8PathBuf::default() {
-            bail!("Argument `--account` must be passed and be a path when using `--keystore`");
+    match account_info {
+        AccountInfo::Keystore(keystore) => {
+            let private_key = parse_number(
+                account_json["private_key"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Invalid private_key"))?,
+            )?;
+            create_to_keystore(
+                private_key,
+                salt,
+                class_hash,
+                &keystore.keystore,
+                &keystore.account,
+            )?;
         }
-
-        let private_key = parse_number(
-            account_json["private_key"]
-                .as_str()
-                .context("Invalid private_key")?,
-        )?;
-        create_to_keystore(private_key, salt, class_hash, &keystore, &account_path)?;
-    } else {
-        write_account_to_accounts_file(account, accounts_file, chain_id, account_json.clone())?;
+        AccountInfo::AccountsFile(accounts_file) => {
+            write_account_to_accounts_file(
+                account_name,
+                &accounts_file.accounts_file,
+                chain_id,
+                account_json.clone(),
+            )?;
+        }
     }
 
     if add_profile {
-        let config = CastConfig {
-            rpc_url: rpc_url.into(),
-            account: account.into(),
-            accounts_file: accounts_file.into(),
+        let (accounts_file, keystore) = match account_info {
+            AccountInfo::Keystore(keystore) => (None, Some(keystore.keystore.clone())),
+            AccountInfo::AccountsFile(accounts_file) => {
+                (Some(accounts_file.accounts_file.clone()), None)
+            }
+        };
+
+        let config = CastConfigBuilder {
+            rpc_url: Some(rpc_url.into()),
+            account: Some(account_name.into()),
+            accounts_file,
             keystore,
             ..Default::default()
         };

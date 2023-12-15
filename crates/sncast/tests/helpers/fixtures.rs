@@ -4,8 +4,8 @@ use primitive_types::U256;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use sncast::get_keystore_password;
-use sncast::{get_account, get_provider, parse_number};
+use sncast::{get_keystore_password, AccountInfo};
+use sncast::{get_provider, parse_number};
 use starknet::accounts::{Account, Call};
 use starknet::contract::ContractFactory;
 use starknet::core::types::contract::{CompiledClass, SierraClass};
@@ -26,12 +26,13 @@ use url::Url;
 
 pub async fn declare_contract(account: &str, path: &str, shortname: &str) -> FieldElement {
     let provider = get_provider(URL).expect("Could not get the provider");
-    let account = get_account(
-        account,
-        &Utf8PathBuf::from(ACCOUNT_FILE_PATH),
-        &provider,
+    let account = AccountInfo::new(
+        Some(account.to_string()),
         None,
+        Utf8PathBuf::from(ACCOUNT_FILE_PATH),
     )
+    .unwrap()
+    .get_account(&provider)
     .await
     .expect("Could not get the account");
 
@@ -73,12 +74,13 @@ pub async fn declare_deploy_contract(account: &str, path: &str, shortname: &str)
     let class_hash = declare_contract(account, path, shortname).await;
 
     let provider = get_provider(URL).expect("Could not get the provider");
-    let account = get_account(
-        account,
-        &Utf8PathBuf::from(ACCOUNT_FILE_PATH),
-        &provider,
+    let account = AccountInfo::new(
+        Some(account.to_string()),
         None,
+        Utf8PathBuf::from(ACCOUNT_FILE_PATH),
     )
+    .unwrap()
+    .get_account(&provider)
     .await
     .expect("Could not get the account");
 
@@ -100,12 +102,13 @@ pub async fn declare_deploy_contract(account: &str, path: &str, shortname: &str)
 
 pub async fn invoke_map_contract(key: &str, value: &str, account: &str, contract_address: &str) {
     let provider = get_provider(URL).expect("Could not get the provider");
-    let account = get_account(
-        account,
-        &Utf8PathBuf::from(ACCOUNT_FILE_PATH),
-        &provider,
+    let account = AccountInfo::new(
+        Some(account.to_string()),
         None,
+        Utf8PathBuf::from(ACCOUNT_FILE_PATH),
     )
+    .unwrap()
+    .get_account(&provider)
     .await
     .expect("Could not get the account");
 

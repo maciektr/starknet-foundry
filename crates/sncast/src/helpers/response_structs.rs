@@ -53,13 +53,13 @@ pub struct MulticallNewResponse {
 pub struct ShowConfigResponse {
     pub profile: Option<String>,
     pub chain_id: String,
-    pub rpc_url: Option<String>,
+    pub rpc_url: String,
     pub account: Option<String>,
     pub scarb_path: Option<Utf8PathBuf>,
     pub accounts_file_path: Option<Utf8PathBuf>,
     pub keystore: Option<Utf8PathBuf>,
-    pub wait_timeout: Option<u16>,
-    pub wait_retry_interval: Option<u8>,
+    pub wait_timeout: u16,
+    pub wait_retry_interval: u8,
 }
 
 #[derive(Serialize)]

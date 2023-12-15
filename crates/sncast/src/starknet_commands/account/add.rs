@@ -4,8 +4,8 @@ use crate::starknet_commands::account::{
 use anyhow::{ensure, Context, Result};
 use camino::Utf8PathBuf;
 use clap::Args;
+use sncast::helpers::config::CastConfigBuilder;
 use sncast::helpers::response_structs::AccountAddResponse;
-use sncast::helpers::scarb_utils::CastConfig;
 use sncast::{get_chain_id, parse_number};
 use starknet::core::types::BlockTag::Pending;
 use starknet::core::types::{BlockId, FieldElement};
@@ -92,10 +92,10 @@ pub async fn add(
     write_account_to_accounts_file(account, accounts_file, chain_id, account_json.clone())?;
 
     if add.add_profile {
-        let config = CastConfig {
-            rpc_url: rpc_url.into(),
-            account: account.into(),
-            accounts_file: accounts_file.into(),
+        let config = CastConfigBuilder {
+            rpc_url: Some(rpc_url.into()),
+            account: Some(account.into()),
+            accounts_file: Some(accounts_file.into()),
             ..Default::default()
         };
         add_created_profile_to_configuration(path_to_scarb_toml, &config)?;

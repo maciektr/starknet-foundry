@@ -15,6 +15,7 @@ use starknet::providers::{
 };
 use starknet::signers::{LocalWallet, SigningKey};
 
+use sncast::helpers::config::AccountInfo;
 use sncast::{
     account_file_exists, chain_id_to_network_name, get_keystore_password, handle_rpc_error,
     handle_wait_for_tx, parse_number, WaitForTx,
@@ -41,43 +42,38 @@ pub struct Deploy {
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy(
     provider: &JsonRpcClient<HttpTransport>,
-    accounts_file: Utf8PathBuf,
+    account_info: &AccountInfo,
     name: String,
     chain_id: FieldElement,
     max_fee: Option<FieldElement>,
     wait_config: WaitForTx,
     class_hash: Option<String>,
-    keystore_path: Option<Utf8PathBuf>,
-    account_path: Option<Utf8PathBuf>,
 ) -> Result<InvokeResponse> {
-    if let Some(keystore_path_) = keystore_path {
-        let account_path_ = account_path
-            .context("Argument `--account` must be passed and be a path when using `--keystore`")?;
-
-        deploy_from_keystore(
-            provider,
-            chain_id,
-            max_fee,
-            wait_config,
-            keystore_path_,
-            account_path_,
-        )
-        .await
-    } else {
-        if name == String::default() {
-            bail!("No --name value passed")
+    match account_info {
+        AccountInfo::Keystore(keystore) => {
+            deploy_from_keystore(
+                provider,
+                chain_id,
+                max_fee,
+                wait_config,
+                keystore.keystore.clone(),
+                keystore.account.clone(),
+            )
+            .await
         }
-        account_file_exists(&accounts_file)?;
-        deploy_from_accounts_file(
-            provider,
-            accounts_file,
-            name,
-            chain_id,
-            max_fee,
-            wait_config,
-            class_hash,
-        )
-        .await
+        AccountInfo::AccountsFile(accounts_file) => {
+            account_file_exists(&accounts_file.accounts_file)?;
+            deploy_from_accounts_file(
+                provider,
+                accounts_file.accounts_file.clone(),
+                name,
+                chain_id,
+                max_fee,
+                wait_config,
+                class_hash,
+            )
+            .await
+        }
     }
 }
 

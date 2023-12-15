@@ -1,55 +1,13 @@
 use super::constants::{WAIT_RETRY_INTERVAL, WAIT_TIMEOUT};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use scarb_artifacts::ScarbCommand;
 use scarb_metadata;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::default::Default;
 use std::env;
 use std::fs::canonicalize;
 use std::str::FromStr;
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub struct CastConfig {
-    pub rpc_url: String,
-    pub account: String,
-    pub accounts_file: Utf8PathBuf,
-    pub keystore: Option<Utf8PathBuf>,
-    pub wait_timeout: u16,
-    pub wait_retry_interval: u8,
-}
-
-impl CastConfig {
-    pub fn from_package_tool_sncast(
-        package_tool_sncast: &Value,
-        profile: &Option<String>,
-    ) -> Result<CastConfig> {
-        let tool = get_profile(package_tool_sncast, profile)?;
-
-        Ok(CastConfig {
-            rpc_url: get_property(tool, "url"),
-            account: get_property(tool, "account"),
-            accounts_file: get_property(tool, "accounts-file"),
-            keystore: get_property_optional(tool, "keystore"),
-            wait_timeout: get_property(tool, "wait-timeout"),
-            wait_retry_interval: get_property(tool, "wait-retry-interval"),
-        })
-    }
-}
-
-impl Default for CastConfig {
-    fn default() -> Self {
-        Self {
-            rpc_url: String::default(),
-            account: String::default(),
-            accounts_file: Utf8PathBuf::default(),
-            keystore: None,
-            wait_timeout: WAIT_TIMEOUT,
-            wait_retry_interval: WAIT_RETRY_INTERVAL,
-        }
-    }
-}
 
 pub trait PropertyFromCastConfig: Sized {
     fn from_toml_value(value: &Value) -> Option<Self>;
@@ -229,34 +187,6 @@ pub fn get_package_metadata<'a>(
     Ok(package)
 }
 
-pub fn parse_scarb_config(
-    profile: &Option<String>,
-    path: &Option<Utf8PathBuf>,
-) -> Result<CastConfig> {
-    let manifest_path = match path.clone() {
-        Some(path) => {
-            if !(path.exists()) {
-                bail!("Failed to locate file at path = {path}");
-            }
-            path
-        }
-        None => get_scarb_manifest().context("Failed to obtain manifest path from scarb")?,
-    };
-
-    if !manifest_path.exists() {
-        return Ok(CastConfig::default());
-    }
-
-    let metadata = get_scarb_metadata(&manifest_path)?;
-
-    match get_package_tool_sncast(&metadata) {
-        Ok(package_tool_sncast) => {
-            CastConfig::from_package_tool_sncast(package_tool_sncast, profile)
-        }
-        Err(_) => Ok(CastConfig::default()),
-    }
-}
-
 pub fn get_package_tool_sncast(metadata: &scarb_metadata::Metadata) -> Result<&Value> {
     let first_package = metadata
         .packages
@@ -278,9 +208,8 @@ pub fn get_package_tool_sncast(metadata: &scarb_metadata::Metadata) -> Result<&V
 
 #[cfg(test)]
 mod tests {
+    use crate::helpers::config::CastConfigBuilder;
     use crate::helpers::scarb_utils::get_scarb_metadata;
-    use crate::helpers::scarb_utils::parse_scarb_config;
-    use crate::helpers::scarb_utils::CastConfig;
     use crate::helpers::scarb_utils::{WAIT_RETRY_INTERVAL, WAIT_TIMEOUT};
     use camino::Utf8PathBuf;
     use sealed_test::prelude::rusty_fork_test;
@@ -288,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_parse_scarb_config_happy_case_with_profile() {
-        let config = parse_scarb_config(
+        let config = CastConfigBuilder::from_scarb(
             &Some(String::from("myprofile")),
             &Some(Utf8PathBuf::from(
                 "tests/data/contracts/constructor_with_params/Scarb.toml",
@@ -296,51 +225,58 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(config.account, String::from("user1"));
-        assert_eq!(config.rpc_url, String::from("http://127.0.0.1:5055/rpc"));
+        assert_eq!(config.account.unwrap(), String::from("user1"));
+        assert_eq!(
+            config.rpc_url.unwrap(),
+            String::from("http://127.0.0.1:5055/rpc")
+        );
     }
 
     #[test]
     fn test_parse_scarb_config_happy_case_without_profile() {
-        let config = parse_scarb_config(
+        let config = CastConfigBuilder::from_scarb(
             &None,
             &Some(Utf8PathBuf::from("tests/data/contracts/map/Scarb.toml")),
         )
         .unwrap();
-        assert_eq!(config.account, String::from("user2"));
-        assert_eq!(config.rpc_url, String::from("http://127.0.0.1:5055/rpc"));
+        assert_eq!(config.account.unwrap(), String::from("user2"));
+        assert_eq!(
+            config.rpc_url.unwrap(),
+            String::from("http://127.0.0.1:5055/rpc")
+        );
     }
 
     #[test]
     fn test_parse_scarb_config_not_found() {
         let config =
-            parse_scarb_config(&None, &Some(Utf8PathBuf::from("whatever/Scarb.toml"))).unwrap_err();
+            CastConfigBuilder::from_scarb(&None, &Some(Utf8PathBuf::from("whatever/Scarb.toml")))
+                .unwrap_err();
         assert!(config.to_string().contains("file does not exist!"));
     }
 
     #[test]
     fn test_parse_scarb_config_no_path_not_found() {
-        let config = parse_scarb_config(&None, &None).unwrap();
+        let config = CastConfigBuilder::from_scarb(&None, &None).unwrap();
 
-        assert!(config.rpc_url.is_empty());
-        assert!(config.account.is_empty());
+        assert!(config.rpc_url.is_none());
+        assert!(config.account.is_none());
     }
 
     #[test]
     fn test_parse_scarb_config_not_in_file() {
-        let config = parse_scarb_config(
+        let config = CastConfigBuilder::from_scarb(
             &None,
             &Some(Utf8PathBuf::from("tests/data/files/noconfig_Scarb.toml")),
         )
         .unwrap();
 
-        assert!(config.rpc_url.is_empty());
-        assert!(config.account.is_empty());
+        assert!(config.rpc_url.is_none());
+        assert!(config.account.is_none());
     }
 
     #[test]
     fn test_parse_scarb_config_no_profile_found() {
-        let config = parse_scarb_config(
+        let config = CastConfigBuilder::from_scarb(
             &Some(String::from("mariusz")),
             &Some(Utf8PathBuf::from("tests/data/contracts/map/Scarb.toml")),
         )
@@ -353,29 +289,33 @@ mod tests {
 
     #[test]
     fn test_parse_scarb_config_account_missing() {
-        let config = parse_scarb_config(
+        let config = CastConfigBuilder::from_scarb(
             &None,
             &Some(Utf8PathBuf::from("tests/data/files/somemissing_Scarb.toml")),
         )
         .unwrap();
 
-        assert!(config.account.is_empty());
+        assert!(config.account.is_none());
     }
 
     #[sealed_test(files = ["tests/data/contracts/no_sierra/Scarb.toml"])]
     fn test_parse_scarb_config_no_profile_no_path() {
-        let config = parse_scarb_config(&None, &None).unwrap();
+        let config = CastConfigBuilder::from_scarb(&None, &None).unwrap();
 
-        assert!(config.rpc_url.is_empty());
-        assert!(config.account.is_empty());
+        assert!(config.rpc_url.is_none());
+        assert!(config.account.is_none());
     }
 
     #[sealed_test(files = ["tests/data/contracts/constructor_with_params/Scarb.toml"])]
     fn test_parse_scarb_config_no_path() {
-        let config = parse_scarb_config(&Some(String::from("myprofile")), &None).unwrap();
+        let config =
+            CastConfigBuilder::from_scarb(&Some(String::from("myprofile")), &None).unwrap();
 
-        assert_eq!(config.rpc_url, String::from("http://127.0.0.1:5055/rpc"));
-        assert_eq!(config.account, String::from("user1"));
+        assert_eq!(
+            config.rpc_url.unwrap(),
+            String::from("http://127.0.0.1:5055/rpc")
+        );
+        assert_eq!(config.account.unwrap(), String::from("user1"));
     }
 
     #[test]
@@ -394,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        let config = CastConfig::default();
+        let config = CastConfigBuilder::default().build().unwrap();
         assert_eq!(config.wait_timeout, WAIT_TIMEOUT);
         assert_eq!(config.wait_retry_interval, WAIT_RETRY_INTERVAL);
     }

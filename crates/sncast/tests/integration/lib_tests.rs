@@ -2,7 +2,7 @@ use crate::helpers::constants::URL;
 use crate::helpers::fixtures::create_test_provider;
 
 use camino::Utf8PathBuf;
-use sncast::{get_account, get_provider};
+use sncast::{get_provider, AccountInfo};
 use std::fs;
 use url::ParseError;
 
@@ -31,12 +31,11 @@ async fn test_get_provider_empty_url() {
 #[tokio::test]
 async fn test_get_account() {
     let provider = create_test_provider();
-    let account = get_account(
-        "user1",
-        &Utf8PathBuf::from("tests/data/accounts/accounts.json"),
-        &provider,
-        None,
+    let account = AccountInfo::for_accounts_file(
+        Some("user1".into()),
+        Utf8PathBuf::from("tests/data/accounts/accounts.json"),
     )
+    .get_account(&provider)
     .await;
 
     assert!(account.is_ok());
@@ -50,12 +49,11 @@ async fn test_get_account() {
 #[tokio::test]
 async fn test_get_account_no_file() {
     let provider = create_test_provider();
-    let account = get_account(
-        "user1",
-        &Utf8PathBuf::from("tests/data/accounts/nonexistentfile.json"),
-        &provider,
-        None,
+    let account = AccountInfo::for_accounts_file(
+        Some("user1".to_string()),
+        Utf8PathBuf::from("tests/data/accounts/nonexistentfile.json"),
     )
+    .get_account(&provider)
     .await;
     let err = account.unwrap_err();
     assert!(err
@@ -66,12 +64,11 @@ async fn test_get_account_no_file() {
 #[tokio::test]
 async fn test_get_account_invalid_file() {
     let provider = create_test_provider();
-    let account = get_account(
-        "user1",
-        &Utf8PathBuf::from("tests/data/accounts/invalid_format.json"),
-        &provider,
-        None,
+    let account = AccountInfo::for_accounts_file(
+        Some("user1".into()),
+        Utf8PathBuf::from("tests/data/accounts/invalid_format.json"),
     )
+    .get_account(&provider)
     .await;
     let err = account.unwrap_err();
     assert!(err.is::<serde_json::Error>());
@@ -80,12 +77,11 @@ async fn test_get_account_invalid_file() {
 #[tokio::test]
 async fn test_get_account_no_account() {
     let provider = create_test_provider();
-    let account = get_account(
-        "",
-        &Utf8PathBuf::from("tests/data/accounts/accounts.json"),
-        &provider,
+    let account = AccountInfo::for_accounts_file(
         None,
+        Utf8PathBuf::from("tests/data/accounts/accounts.json"),
     )
+    .get_account(&provider)
     .await;
     let err = account.unwrap_err();
     assert!(err
@@ -96,12 +92,11 @@ async fn test_get_account_no_account() {
 #[tokio::test]
 async fn test_get_account_no_user_for_network() {
     let provider = create_test_provider();
-    let account = get_account(
-        "user10",
-        &Utf8PathBuf::from("tests/data/accounts/accounts.json"),
-        &provider,
-        None,
+    let account = AccountInfo::for_accounts_file(
+        Some("user10".into()),
+        Utf8PathBuf::from("tests/data/accounts/accounts.json"),
     )
+    .get_account(&provider)
     .await;
     let err = account.unwrap_err();
     assert!(err
@@ -112,24 +107,22 @@ async fn test_get_account_no_user_for_network() {
 #[tokio::test]
 async fn test_get_account_failed_to_convert_field_elements() {
     let provider = create_test_provider();
-    let account1 = get_account(
-        "with_wrong_private_key",
-        &Utf8PathBuf::from("tests/data/accounts/faulty_accounts.json"),
-        &provider,
-        None,
+    let account1 = AccountInfo::for_accounts_file(
+        Some("with_wrong_private_key".into()),
+        Utf8PathBuf::from("tests/data/accounts/faulty_accounts.json"),
     )
+    .get_account(&provider)
     .await;
     let err1 = account1.unwrap_err();
     assert!(err1
         .to_string()
         .contains("Failed to convert private key: privatekey to FieldElement"));
 
-    let account2 = get_account(
-        "with_wrong_address",
-        &Utf8PathBuf::from("tests/data/accounts/faulty_accounts.json"),
-        &provider,
-        None,
+    let account2 = AccountInfo::for_accounts_file(
+        Some("with_wrong_address".into()),
+        Utf8PathBuf::from("tests/data/accounts/faulty_accounts.json"),
     )
+    .get_account(&provider)
     .await;
     let err2 = account2.unwrap_err();
     assert!(err2

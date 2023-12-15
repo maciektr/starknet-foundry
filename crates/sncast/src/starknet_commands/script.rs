@@ -4,7 +4,7 @@ use std::fs;
 
 use crate::starknet_commands::declare::BuildConfig;
 use crate::starknet_commands::{call, declare, deploy, invoke};
-use crate::{get_account, get_nonce, WaitForTx};
+use crate::{get_nonce, WaitForTx};
 use anyhow::{anyhow, ensure, Context, Result};
 use cairo_felt::Felt252;
 use cairo_lang_casm::hints::{Hint, StarknetHint};
@@ -34,9 +34,10 @@ use itertools::chain;
 use num_traits::ToPrimitive;
 use runtime::EnhancedHintError;
 use scarb_artifacts::ScarbCommand;
+use sncast::helpers::config::CastConfig;
 use sncast::helpers::response_structs::ScriptResponse;
 use sncast::helpers::scarb_utils::{
-    get_package_metadata, get_scarb_manifest, get_scarb_metadata_with_deps, CastConfig,
+    get_package_metadata, get_scarb_manifest, get_scarb_metadata_with_deps,
 };
 use starknet::accounts::Account;
 use starknet::core::types::{BlockId, BlockTag::Pending, FieldElement};
@@ -224,12 +225,9 @@ impl CairoHintProcessor<'_> {
                 } else {
                     None
                 };
-                let account = self.runtime.block_on(get_account(
-                    &self.config.account,
-                    &self.config.accounts_file,
-                    self.provider,
-                    self.config.keystore.clone(),
-                ))?;
+                let account = self
+                    .runtime
+                    .block_on(self.config.account_info.get_account(self.provider))?;
 
                 let declare_response = self.runtime.block_on(declare::declare(
                     &contract_name,
@@ -293,12 +291,9 @@ impl CairoHintProcessor<'_> {
                     None
                 };
 
-                let account = self.runtime.block_on(get_account(
-                    &self.config.account,
-                    &self.config.accounts_file,
-                    self.provider,
-                    self.config.keystore.clone(),
-                ))?;
+                let account = self
+                    .runtime
+                    .block_on(self.config.account_info.get_account(self.provider))?;
 
                 let deploy_response = self.runtime.block_on(deploy::deploy(
                     class_hash,
@@ -354,12 +349,9 @@ impl CairoHintProcessor<'_> {
                     None
                 };
 
-                let account = self.runtime.block_on(get_account(
-                    &self.config.account,
-                    &self.config.accounts_file,
-                    self.provider,
-                    self.config.keystore.clone(),
-                ))?;
+                let account = self
+                    .runtime
+                    .block_on(self.config.account_info.get_account(self.provider))?;
 
                 let invoke_response = self.runtime.block_on(invoke::invoke(
                     contract_address,
@@ -384,12 +376,9 @@ impl CairoHintProcessor<'_> {
             "get_nonce" => {
                 let block_id = as_cairo_short_string(&inputs[0])
                     .expect("Failed to convert entry point name to short string");
-                let account = self.runtime.block_on(get_account(
-                    &self.config.account,
-                    &self.config.accounts_file,
-                    self.provider,
-                    self.config.keystore.clone(),
-                ))?;
+                let account = self
+                    .runtime
+                    .block_on(self.config.account_info.get_account(self.provider))?;
 
                 let nonce = self.runtime.block_on(get_nonce(
                     self.provider,

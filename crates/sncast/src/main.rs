@@ -4,16 +4,16 @@ use crate::starknet_commands::{
     account, call::Call, declare::Declare, deploy::Deploy, invoke::Invoke, multicall::Multicall,
     script::Script,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
 
 use crate::starknet_commands::declare::BuildConfig;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
-use sncast::helpers::constants::{DEFAULT_ACCOUNTS_FILE, DEFAULT_MULTICALL_CONTENTS};
-use sncast::helpers::scarb_utils::{parse_scarb_config, CastConfig};
+use sncast::helpers::config::{CastConfig, CastConfigBuilder};
+use sncast::helpers::constants::DEFAULT_MULTICALL_CONTENTS;
 use sncast::{
-    chain_id_to_network_name, get_account, get_block_id, get_chain_id, get_nonce, get_provider,
-    print_command_result, ValueFormat, WaitForTx,
+    chain_id_to_network_name, get_block_id, get_chain_id, get_nonce, get_provider,
+    print_command_result, AccountInfo, ValueFormat, WaitForTx,
 };
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
@@ -45,13 +45,8 @@ struct Cli {
     #[clap(short = 'a', long)]
     account: Option<String>,
 
-    /// Path to the file holding accounts info
-    #[clap(short = 'f', long = "accounts-file")]
-    accounts_file_path: Option<Utf8PathBuf>,
-
-    /// Path to keystore file; if specified, --account should be a path to starkli JSON account file
-    #[clap(short, long)]
-    keystore: Option<Utf8PathBuf>,
+    #[command(flatten)]
+    account_ref: AccountGroup,
 
     /// If passed, values will be displayed as integers
     #[clap(long, conflicts_with = "hex_format")]
@@ -81,6 +76,18 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Parser)]
+#[group(requires = "account", multiple = false)]
+pub struct AccountGroup {
+    /// Path to the file holding accounts info
+    #[clap(short = 'f', long = "accounts-file")]
+    accounts_file_path: Option<Utf8PathBuf>,
+
+    /// Path to keystore file; if specified, --account should be a path to starkli JSON account file
+    #[clap(short, long)]
+    keystore: Option<Utf8PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Declare a contract
@@ -108,20 +115,37 @@ enum Commands {
     Script(Script),
 }
 
+impl Cli {
+    fn value_format(&self) -> ValueFormat {
+        // Clap validates that both are not passed at same time
+        if self.hex_format {
+            ValueFormat::Hex
+        } else if self.int_format {
+            ValueFormat::Int
+        } else {
+            ValueFormat::Default
+        }
+    }
+
+    fn to_config_builder(&self) -> CastConfigBuilder {
+        CastConfigBuilder {
+            rpc_url: self.rpc_url.clone(),
+            account: self.account.clone(),
+            keystore: self.account_ref.keystore.clone(),
+            accounts_file: self.account_ref.accounts_file_path.clone(),
+            wait_timeout: self.wait_timeout,
+            wait_retry_interval: self.wait_retry_interval,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let value_format = cli.value_format();
 
-    // Clap validates that both are not passed at same time
-    let value_format = if cli.hex_format {
-        ValueFormat::Hex
-    } else if cli.int_format {
-        ValueFormat::Int
-    } else {
-        ValueFormat::Default
-    };
-
-    let mut config = parse_scarb_config(&cli.profile, &cli.path_to_scarb_toml)?;
-    update_cast_config(&mut config, &cli);
+    let config = CastConfigBuilder::from_scarb(&cli.profile, &cli.path_to_scarb_toml)?
+        .merge(cli.to_config_builder())
+        .build()?;
 
     let provider = get_provider(&config.rpc_url)?;
     let runtime = Runtime::new().expect("Failed to instantiate Runtime");
@@ -160,13 +184,7 @@ async fn run_async_command(
     };
     match cli.command {
         Commands::Declare(declare) => {
-            let account = get_account(
-                &config.account,
-                &config.accounts_file,
-                &provider,
-                config.keystore,
-            )
-            .await?;
+            let account = config.account_info.get_account(&provider).await?;
             let mut result = starknet_commands::declare::declare(
                 &declare.contract,
                 declare.max_fee,
@@ -181,13 +199,7 @@ async fn run_async_command(
             Ok(())
         }
         Commands::Deploy(deploy) => {
-            let account = get_account(
-                &config.account,
-                &config.accounts_file,
-                &provider,
-                config.keystore,
-            )
-            .await?;
+            let account = config.account_info.get_account(&provider).await?;
             let mut result = starknet_commands::deploy::deploy(
                 deploy.class_hash,
                 deploy.constructor_calldata,
@@ -219,13 +231,7 @@ async fn run_async_command(
             Ok(())
         }
         Commands::Invoke(invoke) => {
-            let account = get_account(
-                &config.account,
-                &config.accounts_file,
-                &provider,
-                config.keystore,
-            )
-            .await?;
+            let account = config.account_info.get_account(&provider).await?;
             let mut result = starknet_commands::invoke::invoke(
                 invoke.contract_address,
                 &invoke.function,
@@ -252,13 +258,7 @@ async fn run_async_command(
                     }
                 }
                 starknet_commands::multicall::Commands::Run(run) => {
-                    let account = get_account(
-                        &config.account,
-                        &config.accounts_file,
-                        &provider,
-                        config.keystore,
-                    )
-                    .await?;
+                    let account = config.account_info.get_account(&provider).await?;
                     let mut result = starknet_commands::multicall::run::run(
                         &run.path,
                         &account,
@@ -274,10 +274,15 @@ async fn run_async_command(
         }
         Commands::Account(account) => match account.command {
             account::Commands::Add(add) => {
+                let accounts_file = config
+                    .account_info
+                    .as_accounts_file()?
+                    .accounts_file
+                    .clone();
                 let mut result = starknet_commands::account::add::add(
                     &config.rpc_url,
                     &add.name.clone(),
-                    &config.accounts_file,
+                    &accounts_file,
                     &cli.path_to_scarb_toml,
                     &provider,
                     &add,
@@ -289,18 +294,16 @@ async fn run_async_command(
             }
             account::Commands::Create(create) => {
                 let chain_id = get_chain_id(&provider).await?;
-                let account = if config.keystore.is_none() {
-                    create
+                let account_name = match config.account_info.clone() {
+                    AccountInfo::Keystore(keystore) => keystore.account.clone().to_string(),
+                    AccountInfo::AccountsFile(_) => create
                         .name
-                        .context("Required argument `--name` not provided")?
-                } else {
-                    config.account
+                        .ok_or_else(|| anyhow!("required argument --name not provided"))?,
                 };
                 let mut result = starknet_commands::account::create::create(
                     &config.rpc_url,
-                    &account,
-                    &config.accounts_file,
-                    config.keystore,
+                    &config.account_info,
+                    &account_name,
                     &provider,
                     cli.path_to_scarb_toml,
                     chain_id,
@@ -315,26 +318,24 @@ async fn run_async_command(
             }
             account::Commands::Deploy(deploy) => {
                 let chain_id = get_chain_id(&provider).await?;
-                let keystore_path = config.keystore.clone();
-                let account_path = Some(Utf8PathBuf::from(config.account.clone()))
-                    .filter(|p| *p != String::default());
-                let account = if config.keystore.is_none() {
-                    deploy
-                        .name
-                        .context("Required argument `--name` not provided")?
-                } else {
-                    config.account
-                };
+
+                let account_name = config.account_info.as_keystore().ok().map_or_else(
+                    || {
+                        deploy
+                            .name
+                            .and_then(|name| if name.is_empty() { None } else { Some(name) })
+                            .ok_or_else(|| anyhow!("required argument --name not provided"))
+                    },
+                    |k| Ok(k.account.to_string()),
+                )?;
                 let mut result = starknet_commands::account::deploy::deploy(
                     &provider,
-                    config.accounts_file,
-                    account,
+                    &config.account_info,
+                    account_name,
                     chain_id,
                     deploy.max_fee,
                     wait_config,
                     deploy.class_hash,
-                    keystore_path,
-                    account_path,
                 )
                 .await;
 
@@ -349,7 +350,7 @@ async fn run_async_command(
 
                 let mut result = starknet_commands::account::delete::delete(
                     &delete.name,
-                    &config.accounts_file,
+                    &config.account_info.as_accounts_file()?.accounts_file,
                     &cli.path_to_scarb_toml,
                     delete.delete_profile,
                     &network_name,
@@ -373,27 +374,4 @@ async fn run_async_command(
         }
         Commands::Script(_) => unreachable!(),
     }
-}
-
-fn update_cast_config(config: &mut CastConfig, cli: &Cli) {
-    macro_rules! clone_or_else {
-        ($field:expr, $config_field:expr) => {
-            $field.clone().unwrap_or_else(|| $config_field.clone())
-        };
-    }
-
-    config.rpc_url = clone_or_else!(cli.rpc_url, config.rpc_url);
-    config.account = clone_or_else!(cli.account, config.account);
-    config.keystore = cli.keystore.clone().or(config.keystore.clone());
-
-    if config.accounts_file == Utf8PathBuf::default() {
-        config.accounts_file = Utf8PathBuf::from(DEFAULT_ACCOUNTS_FILE);
-    }
-    let new_accounts_file = clone_or_else!(cli.accounts_file_path, config.accounts_file);
-
-    config.accounts_file = Utf8PathBuf::from(shellexpand::tilde(&new_accounts_file).to_string());
-
-    config.wait_timeout = clone_or_else!(cli.wait_timeout, config.wait_timeout);
-    config.wait_retry_interval =
-        clone_or_else!(cli.wait_retry_interval, config.wait_retry_interval);
 }

@@ -6,11 +6,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use camino::Utf8PathBuf;
 use clap::{Args, Subcommand};
 use serde_json::json;
+use sncast::helpers::config::CastConfigBuilder;
 use sncast::{
     chain_id_to_network_name, decode_chain_id,
-    helpers::scarb_utils::{
-        get_package_tool_sncast, get_scarb_manifest, get_scarb_metadata, CastConfig,
-    },
+    helpers::scarb_utils::{get_package_tool_sncast, get_scarb_manifest, get_scarb_metadata},
 };
 use starknet::{core::types::FieldElement, signers::SigningKey};
 use std::{fs::OpenOptions, io::Write};
@@ -96,22 +95,22 @@ pub fn write_account_to_accounts_file(
 
 pub fn add_created_profile_to_configuration(
     path_to_scarb_toml: &Option<Utf8PathBuf>,
-    config: &CastConfig,
+    config: &CastConfigBuilder,
 ) -> Result<()> {
     let manifest_path = match path_to_scarb_toml.clone() {
         Some(path) => path,
         None => get_scarb_manifest().context("Failed to obtain manifest path from scarb")?,
     };
     let metadata = get_scarb_metadata(&manifest_path)?;
-
+    let account_name = config.account.clone().unwrap_or_default();
     if let Ok(tool_sncast) = get_package_tool_sncast(&metadata) {
         let property = tool_sncast
-            .get(&config.account)
+            .get(&account_name)
             .and_then(|profile_| profile_.get("account"));
         if property.is_some() {
             bail!(
                 "Failed to add profile = {} to the Scarb.toml. Profile already exists",
-                config.account
+                account_name
             );
         }
     }
@@ -120,19 +119,31 @@ pub fn add_created_profile_to_configuration(
         let mut tool_sncast = toml::value::Table::new();
         let mut new_profile = toml::value::Table::new();
 
-        new_profile.insert("url".to_string(), Value::String(config.rpc_url.clone()));
-        new_profile.insert("account".to_string(), Value::String(config.account.clone()));
+        new_profile.insert(
+            "url".to_string(),
+            Value::String(config.rpc_url.clone().unwrap_or_default()),
+        );
+        new_profile.insert(
+            "account".to_string(),
+            Value::String(config.account.clone().unwrap_or_default()),
+        );
         if let Some(keystore) = config.keystore.clone() {
             new_profile.insert("keystore".to_string(), Value::String(keystore.to_string()));
         } else {
             new_profile.insert(
                 "accounts-file".to_string(),
-                Value::String(config.accounts_file.to_string()),
+                Value::String(
+                    config
+                        .accounts_file
+                        .clone()
+                        .map(|p| p.to_string())
+                        .unwrap_or_default(),
+                ),
             );
         }
 
-        let account_path = Utf8PathBuf::from(&config.account);
-        let profile_name = account_path.file_stem().unwrap_or(&config.account);
+        let account_path = Utf8PathBuf::from(&config.account.clone().unwrap_or_default());
+        let profile_name = account_path.file_stem().unwrap_or(&account_name);
         tool_sncast.insert(profile_name.into(), Value::Table(new_profile));
 
         let mut tool = toml::value::Table::new();
@@ -159,18 +170,18 @@ pub fn add_created_profile_to_configuration(
 mod tests {
     use sealed_test::prelude::rusty_fork_test;
     use sealed_test::prelude::sealed_test;
+    use sncast::helpers::config::CastConfigBuilder;
     use sncast::helpers::constants::DEFAULT_ACCOUNTS_FILE;
-    use sncast::helpers::scarb_utils::CastConfig;
     use std::fs;
 
     use crate::starknet_commands::account::add_created_profile_to_configuration;
 
     #[sealed_test(files = ["tests/data/contracts/constructor_with_params/Scarb.toml"])]
     fn test_add_created_profile_to_configuration_happy_case() {
-        let config = CastConfig {
-            rpc_url: String::from("http://some-url"),
-            account: String::from("some-name"),
-            accounts_file: "accounts".into(),
+        let config = CastConfigBuilder {
+            rpc_url: Some(String::from("http://some-url")),
+            account: Some(String::from("some-name")),
+            accounts_file: Some("accounts".into()),
             ..Default::default()
         };
         let res = add_created_profile_to_configuration(&None, &config);
@@ -186,10 +197,10 @@ mod tests {
 
     #[sealed_test(files = ["tests/data/contracts/constructor_with_params/Scarb.toml"])]
     fn test_add_created_profile_to_configuration_profile_already_exists() {
-        let config = CastConfig {
-            rpc_url: String::from("http://some-url"),
-            account: String::from("myprofile"),
-            accounts_file: DEFAULT_ACCOUNTS_FILE.into(),
+        let config = CastConfigBuilder {
+            rpc_url: Some(String::from("http://some-url")),
+            account: Some(String::from("myprofile")),
+            accounts_file: Some(DEFAULT_ACCOUNTS_FILE.into()),
             ..Default::default()
         };
         let res = add_created_profile_to_configuration(&None, &config);

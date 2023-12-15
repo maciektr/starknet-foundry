@@ -1,3 +1,4 @@
+pub use crate::helpers::config::AccountInfo;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use camino::Utf8PathBuf;
 use helpers::constants::{KEYSTORE_PASSWORD_ENV_VAR, UDC_ADDRESS};
@@ -186,38 +187,54 @@ pub async fn get_nonce(
         .expect("Failed to get a nonce"))
 }
 
-pub async fn get_account<'a>(
-    account: &str,
-    accounts_file: &Utf8PathBuf,
-    provider: &'a JsonRpcClient<HttpTransport>,
-    keystore: Option<Utf8PathBuf>,
-) -> Result<SingleOwnerAccount<&'a JsonRpcClient<HttpTransport>, LocalWallet>> {
-    let chain_id = get_chain_id(provider).await?;
-    let account = if let Some(keystore) = keystore {
-        get_account_from_keystore(provider, chain_id, &keystore, account)?
-    } else {
-        get_account_from_accounts_file(account, accounts_file, provider, chain_id)?
-    };
-    Ok(account)
+impl<'a> AccountInfo {
+    pub async fn get_account(
+        &self,
+        provider: &'a JsonRpcClient<HttpTransport>,
+    ) -> Result<SingleOwnerAccount<&'a JsonRpcClient<HttpTransport>, LocalWallet>> {
+        let chain_id = get_chain_id(provider).await?;
+        match self {
+            AccountInfo::Keystore(keystore) => {
+                get_account_from_keystore(provider, chain_id, &keystore.keystore, &keystore.account)
+            }
+            AccountInfo::AccountsFile(file) => {
+                let account = file
+                    .account
+                    .clone()
+                    .ok_or_else(|| anyhow!("Account name not passed nor found in Scarb.toml"))?;
+                get_account_from_accounts_file(&account, &file.accounts_file, provider, chain_id)
+            }
+        }
+    }
 }
+
+// pub async fn get_account<'a>(
+//     account: &str,
+//     accounts_file: &Utf8PathBuf,
+//     provider: &'a JsonRpcClient<HttpTransport>,
+//     keystore: Option<Utf8PathBuf>,
+// ) -> Result<SingleOwnerAccount<&'a JsonRpcClient<HttpTransport>, LocalWallet>> {
+//     let chain_id = get_chain_id(provider).await?;
+//     let account = if let Some(keystore) = keystore {
+//         get_account_from_keystore(provider, chain_id, &keystore, account)?
+//     } else {
+//         get_account_from_accounts_file(account, accounts_file, provider, chain_id)?
+//     };
+//     Ok(account)
+// }
 
 fn get_account_from_keystore<'a>(
     provider: &'a JsonRpcClient<HttpTransport>,
     chain_id: FieldElement,
     keystore_path: &Utf8PathBuf,
-    account: &str,
+    path_to_account: &Utf8PathBuf,
 ) -> Result<SingleOwnerAccount<&'a JsonRpcClient<HttpTransport>, LocalWallet>> {
     if !keystore_path.exists() {
         bail!("Failed to find keystore file");
     }
-    if account.is_empty() {
-        bail!("Passed empty path for `--account`");
-    }
-    let path_to_account = Utf8PathBuf::from(account);
     if !path_to_account.exists() {
         bail!("File containing the account does not exist: When using `--keystore` argument, the `--account` argument should be a path to the starkli JSON account file");
     }
-
     let signer = LocalWallet::from(SigningKey::from_keystore(
         keystore_path,
         get_keystore_password(KEYSTORE_PASSWORD_ENV_VAR)?.as_str(),
