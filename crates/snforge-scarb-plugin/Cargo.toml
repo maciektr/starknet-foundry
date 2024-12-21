@@ -1,6 +1,6 @@
 [package]
 name = "snforge_scarb_plugin"
-version.workspace = true
+version = "0.35.2-rc.0"
 edition.workspace = true
 publish = false
 rust-version = "1.80.1"
