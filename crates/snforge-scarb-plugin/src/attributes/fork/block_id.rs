@@ -49,7 +49,7 @@ impl CairoExpression for BlockId {
 
 impl ParseFromExpr<(BlockIdVariants, &Expr)> for BlockId {
     fn parse_from_expr<T: crate::attributes::AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         (variant, block_args): &(BlockIdVariants, &Expr),
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {

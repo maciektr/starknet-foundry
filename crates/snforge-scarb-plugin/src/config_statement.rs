@@ -3,14 +3,16 @@ use crate::{
     attributes::AttributeCollector,
     common::{into_proc_macro_result, with_parsed_values},
 };
-use cairo_lang_macro::{Diagnostic, Diagnostics, ProcMacroResult, TokenStream};
+use cairo_lang_macro::{
+    quote, Diagnostic, Diagnostics, ProcMacroResult, TextSpan, Token, TokenStream, TokenTree,
+};
+use cairo_lang_parser::utils::SimpleParserDatabase;
+use cairo_lang_syntax::node::with_db::SyntaxNodeWithDb;
 use cairo_lang_syntax::node::{
     ast::{Condition, Expr, FunctionWithBody, Statement},
-    db::SyntaxGroup,
     helpers::GetIdentifier,
     TypedSyntaxNode,
 };
-use indoc::formatdoc;
 
 #[allow(clippy::needless_pass_by_value)]
 pub fn extend_with_config_cheatcodes<Collector>(
@@ -26,12 +28,12 @@ where
 }
 
 fn with_config_cheatcodes<Collector>(
-    db: &dyn SyntaxGroup,
+    db: &SimpleParserDatabase,
     func: &FunctionWithBody,
-    args_db: &dyn SyntaxGroup,
+    args_db: &SimpleParserDatabase,
     args: Arguments,
     warns: &mut Vec<Diagnostic>,
-) -> Result<String, Diagnostics>
+) -> Result<TokenStream, Diagnostics>
 where
     Collector: AttributeCollector,
 {
@@ -39,28 +41,31 @@ where
 
     let cheatcode_name = Collector::CHEATCODE_NAME;
 
-    let config_cheatcode = formatdoc!(
-        r"
+    let cheatcode = TokenTree::Ident(Token::new(
+        format!("starknet::testing::cheatcode::<'{cheatcode_name}'>(data.span())"),
+        TextSpan::call_site(),
+    ));
+
+    let config_cheatcode = quote!(
             let mut data = array![];
 
-            {value}
+            #value
             .serialize(ref data);
 
-            starknet::testing::cheatcode::<'{cheatcode_name}'>(data.span());
-        "
+            #cheatcode;
     );
 
     Ok(append_config_statements(db, func, &config_cheatcode))
 }
 
 pub fn append_config_statements(
-    db: &dyn SyntaxGroup,
+    db: &SimpleParserDatabase,
     func: &FunctionWithBody,
-    config_statements: &str,
-) -> String {
-    let vis = func.visibility(db).as_syntax_node().get_text(db);
-    let attrs = func.attributes(db).as_syntax_node().get_text(db);
-    let declaration = func.declaration(db).as_syntax_node().get_text(db);
+    config_statements: &TokenStream,
+) -> TokenStream {
+    let vis = func.visibility(db).as_syntax_node();
+    let attrs = func.attributes(db).as_syntax_node();
+    let declaration = func.declaration(db).as_syntax_node();
     let statements = func.body(db).statements(db).elements(db);
 
     let if_content = statements.first().and_then(|stmt| {
@@ -99,8 +104,17 @@ pub fn append_config_statements(
         Some(
             statements[..statements.len() - 1]
                 .iter()
-                .fold(String::new(), |acc, statement| {
-                    acc + "\n" + &statement.as_syntax_node().get_text(db)
+                // .fold(String::new(), |acc, statement| {
+                //     acc + "\n" + &statement.as_syntax_node().get_text(db)
+                // }),
+                .map(|stmt| {
+                    let syntax = stmt.as_syntax_node();
+                    let syntax = SyntaxNodeWithDb::new(&syntax, db);
+                    quote!(#syntax)
+                })
+                .fold(TokenStream::empty(), |mut acc, token| {
+                    acc.extend(token);
+                    acc
                 }),
         )
     });
@@ -112,26 +126,58 @@ pub fn append_config_statements(
         &statements[..]
     }
     .iter()
-    .fold(String::new(), |acc, stmt| {
-        acc + &stmt.as_syntax_node().get_text(db)
+    .map(|t| {
+        let syntax = t.as_syntax_node();
+        let syntax = SyntaxNodeWithDb::new(&syntax, db);
+        quote!(#syntax)
+    })
+    .fold(TokenStream::empty(), |mut acc, token| {
+        acc.extend(token);
+        acc
     });
 
-    let if_content = if_content.unwrap_or_default();
+    let if_content = if_content.unwrap_or_else(TokenStream::empty);
 
-    formatdoc!(
-        "
-            {attrs}
-            {vis} {declaration} {{
-                if snforge_std::_internals::_is_config_run() {{
-                    {if_content}
+    // let statements = statements;
 
-                    {config_statements}
+    // .into_iter().map(|stmt| {
+    //     let syntax = stmt.as_syntax_node();
+    //     let syntax = SyntaxNodeWithDb::new(&syntax, db);
+    //     let token = ToPrimitiveTokenStream::to_primitive_token_stream(&syntax);
+    //     TokenStream::from_primitive_token_stream(token)
+    // });
+
+    // quote!(
+    //         #attrs
+    //         #vis #declaration {{
+    //             if snforge_std::_internals::_is_config_run() {{
+    //                 #if_content
+    //
+    //                 #config_statements
+    //
+    //                 return;
+    //             }}
+    //
+    //             #statements
+    //         }}
+    // )
+
+    let attrs = SyntaxNodeWithDb::new(&attrs, db);
+    let vis = SyntaxNodeWithDb::new(&vis, db);
+    let declaration = SyntaxNodeWithDb::new(&declaration, db);
+    let config_statements = config_statements.clone();
+    quote!(
+            #attrs
+            #vis #declaration {
+                if snforge_std::_internals::_is_config_run() {
+                    #if_content
+
+                    #config_statements
 
                     return;
-                }}
+                }
 
-                {statements}
-            }}
-        "
+                #statements
+            }
     )
 }

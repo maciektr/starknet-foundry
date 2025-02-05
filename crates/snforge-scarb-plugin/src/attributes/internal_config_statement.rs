@@ -30,9 +30,9 @@ pub fn internal_config_statement(args: TokenStream, item: TokenStream) -> ProcMa
 #[allow(clippy::ptr_arg)]
 #[allow(clippy::needless_pass_by_value)]
 fn internal_config_statement_internal(
-    db: &dyn SyntaxGroup,
+    db: &SimpleParserDatabase,
     func: &FunctionWithBody,
-    _args_db: &dyn SyntaxGroup,
+    _args_db: &SimpleParserDatabase,
     args: Arguments,
     _warns: &mut Vec<Diagnostic>,
 ) -> Result<String, Diagnostics> {

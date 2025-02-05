@@ -6,7 +6,7 @@ use crate::{
     config_statement::extend_with_config_cheatcodes,
     types::{Number, ParseFromExpr},
 };
-use cairo_lang_macro::{Diagnostic, Diagnostics, ProcMacroResult, TokenStream};
+use cairo_lang_macro::{Diagnostic, Diagnostics, ProcMacroResult, Token, TokenStream};
 use cairo_lang_syntax::node::db::SyntaxGroup;
 use num_bigint::BigInt;
 
@@ -22,10 +22,10 @@ impl AttributeTypeData for FuzzerCollector {
 
 impl AttributeCollector for FuzzerCollector {
     fn args_into_config_expression(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         args: Arguments,
         _warns: &mut Vec<Diagnostic>,
-    ) -> Result<String, Diagnostics> {
+    ) -> Result<TokenStream, Diagnostics> {
         let named_args = args.named_only::<Self>()?;
 
         let seed = named_args

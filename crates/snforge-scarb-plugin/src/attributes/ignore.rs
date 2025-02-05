@@ -18,7 +18,7 @@ impl AttributeTypeData for IgnoreCollector {
 
 impl AttributeCollector for IgnoreCollector {
     fn args_into_config_expression(
-        _db: &dyn SyntaxGroup,
+        _db: &SimpleParserDatabase,
         args: Arguments,
         _warns: &mut Vec<Diagnostic>,
     ) -> Result<String, Diagnostics> {
