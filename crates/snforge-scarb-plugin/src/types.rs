@@ -2,14 +2,15 @@ use crate::{
     attributes::{AttributeInfo, ErrorExt},
     cairo_expression::CairoExpression,
 };
-use cairo_lang_macro::Diagnostic;
-use cairo_lang_syntax::node::{ast::Expr, db::SyntaxGroup, Terminal};
+use cairo_lang_macro::{Diagnostic, TextSpan, Token, TokenStream, TokenTree};
+use cairo_lang_parser::utils::SimpleParserDatabase;
+use cairo_lang_syntax::node::{ast::Expr, Terminal};
 use num_bigint::BigInt;
 use url::Url;
 
 pub trait ParseFromExpr<E>: Sized {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &E,
         arg_name: &str,
     ) -> Result<Self, Diagnostic>;
@@ -22,7 +23,7 @@ pub enum Felt {
 }
 
 impl CairoExpression for Felt {
-    fn as_cairo_expression(&self) -> String {
+    fn as_cairo_expression(&self) -> TokenStream {
         match self {
             Self::Number(number) => number.as_cairo_expression(),
             Self::ShortString(string) => string.as_cairo_expression(),
@@ -32,7 +33,7 @@ impl CairoExpression for Felt {
 
 impl ParseFromExpr<Expr> for Felt {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &Expr,
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {
@@ -58,20 +59,26 @@ pub struct Number(pub(crate) BigInt);
 pub struct ShortString(pub(crate) String);
 
 impl CairoExpression for Number {
-    fn as_cairo_expression(&self) -> String {
-        format!("0x{}", self.0.to_str_radix(16))
+    fn as_cairo_expression(&self) -> TokenStream {
+        TokenStream::new(vec![TokenTree::Ident(Token::new(
+            format!("0x{}", self.0.to_str_radix(16)),
+            TextSpan::call_site(),
+        ))])
     }
 }
 
 impl CairoExpression for ShortString {
-    fn as_cairo_expression(&self) -> String {
-        format!("'{}'", self.0)
+    fn as_cairo_expression(&self) -> TokenStream {
+        TokenStream::new(vec![TokenTree::Ident(Token::new(
+            format!("'{}'", self.0),
+            TextSpan::call_site(),
+        ))])
     }
 }
 
 impl ParseFromExpr<Expr> for Number {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &Expr,
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {
@@ -90,7 +97,7 @@ impl ParseFromExpr<Expr> for Number {
 
 impl ParseFromExpr<Expr> for Url {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &Expr,
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {
@@ -102,7 +109,7 @@ impl ParseFromExpr<Expr> for Url {
 
 impl ParseFromExpr<Expr> for String {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &Expr,
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {
@@ -117,7 +124,7 @@ impl ParseFromExpr<Expr> for String {
 
 impl ParseFromExpr<Expr> for ShortString {
     fn parse_from_expr<T: AttributeInfo>(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         expr: &Expr,
         arg_name: &str,
     ) -> Result<Self, Diagnostic> {
@@ -127,20 +134,26 @@ impl ParseFromExpr<Expr> for ShortString {
                 Ok(ShortString(string))
             }
             _ => Err(T::error(format!(
-                "<{arg_name}> invalid type, should be: double quotted string"
+                "<{arg_name}> invalid type, should be: double quoted string"
             ))),
         }
     }
 }
 
 impl CairoExpression for String {
-    fn as_cairo_expression(&self) -> String {
-        format!(r#""{self}""#)
+    fn as_cairo_expression(&self) -> TokenStream {
+        TokenStream::new(vec![TokenTree::Ident(Token::new(
+            format!(r#""{self}""#),
+            TextSpan::call_site(),
+        ))])
     }
 }
 
 impl CairoExpression for Url {
-    fn as_cairo_expression(&self) -> String {
-        format!(r#""{self}""#)
+    fn as_cairo_expression(&self) -> TokenStream {
+        TokenStream::new(vec![TokenTree::Ident(Token::new(
+            format!(r#""{self}""#),
+            TextSpan::call_site(),
+        ))])
     }
 }

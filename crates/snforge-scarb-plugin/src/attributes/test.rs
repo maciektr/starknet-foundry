@@ -24,9 +24,9 @@ pub fn test(args: TokenStream, item: TokenStream) -> ProcMacroResult {
 #[allow(clippy::ptr_arg)]
 #[allow(clippy::needless_pass_by_value)]
 fn test_internal(
-    db: &dyn SyntaxGroup,
+    db: &SimpleParserDatabase,
     func: &FunctionWithBody,
-    _args_db: &dyn SyntaxGroup,
+    _args_db: &SimpleParserDatabase,
     args: Arguments,
     _warns: &mut Vec<Diagnostic>,
 ) -> Result<String, Diagnostics> {

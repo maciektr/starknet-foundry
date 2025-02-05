@@ -1,14 +1,14 @@
 use crate::args::Arguments;
-use cairo_lang_macro::{Diagnostic, Diagnostics};
-use cairo_lang_syntax::node::db::SyntaxGroup;
+use cairo_lang_macro::{Diagnostic, Diagnostics, TokenStream};
+use cairo_lang_parser::utils::SimpleParserDatabase;
 
-pub mod available_gas;
-pub mod fork;
-pub mod fuzzer;
-pub mod ignore;
-pub mod internal_config_statement;
+// pub mod available_gas;
+// pub mod fork;
+// pub mod fuzzer;
+// pub mod ignore;
+// pub mod internal_config_statement;
 pub mod should_panic;
-pub mod test;
+// pub mod test;
 
 pub trait AttributeInfo {
     const ATTR_NAME: &'static str;
@@ -20,10 +20,10 @@ pub trait AttributeTypeData {
 
 pub trait AttributeCollector: AttributeInfo + AttributeTypeData {
     fn args_into_config_expression(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         args: Arguments,
         warns: &mut Vec<Diagnostic>,
-    ) -> Result<String, Diagnostics>;
+    ) -> Result<TokenStream, Diagnostics>;
 }
 
 pub trait ErrorExt {

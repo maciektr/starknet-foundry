@@ -20,10 +20,10 @@ impl AttributeTypeData for AvailableGasCollector {
 
 impl AttributeCollector for AvailableGasCollector {
     fn args_into_config_expression(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         args: Arguments,
         _warns: &mut Vec<Diagnostic>,
-    ) -> Result<String, Diagnostics> {
+    ) -> Result<TokenStream, Diagnostics> {
         let &[arg] = args.unnamed_only::<Self>()?.of_length::<1, Self>()?;
 
         let gas = Number::parse_from_expr::<Self>(db, arg.1, arg.0.to_string().as_str())?;

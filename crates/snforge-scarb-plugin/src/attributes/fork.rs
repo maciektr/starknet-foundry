@@ -26,10 +26,10 @@ impl AttributeTypeData for ForkCollector {
 
 impl AttributeCollector for ForkCollector {
     fn args_into_config_expression(
-        db: &dyn SyntaxGroup,
+        db: &SimpleParserDatabase,
         args: Arguments,
         _warns: &mut Vec<Diagnostic>,
-    ) -> Result<String, Diagnostics> {
+    ) -> Result<TokenStream, Diagnostics> {
         let expr = branch!(
             inline_args(db, &args),
             overridden_args(db, &args),
@@ -40,7 +40,7 @@ impl AttributeCollector for ForkCollector {
     }
 }
 
-fn inline_args(db: &dyn SyntaxGroup, args: &Arguments) -> Result<String, Diagnostic> {
+fn inline_args(db: &SimpleParserDatabase, args: &Arguments) -> Result<String, Diagnostic> {
     let named_args = args.named_only::<ForkCollector>()?;
 
     let block_id = named_args.one_of_once(&[
@@ -68,7 +68,7 @@ fn inline_args(db: &dyn SyntaxGroup, args: &Arguments) -> Result<String, Diagnos
     ))
 }
 
-fn from_file_args(db: &dyn SyntaxGroup, args: &Arguments) -> Result<String, Diagnostic> {
+fn from_file_args(db: &SimpleParserDatabase, args: &Arguments) -> Result<String, Diagnostic> {
     let &[arg] = args
         .unnamed_only::<ForkCollector>()?
         .of_length::<1, ForkCollector>()?;
@@ -82,7 +82,7 @@ fn from_file_args(db: &dyn SyntaxGroup, args: &Arguments) -> Result<String, Diag
     ))
 }
 
-fn overridden_args(db: &dyn SyntaxGroup, args: &Arguments) -> Result<String, Diagnostic> {
+fn overridden_args(db: &SimpleParserDatabase, args: &Arguments) -> Result<String, Diagnostic> {
     let &[arg] = args.unnamed().of_length::<1, ForkCollector>()?;
 
     let block_id = args.named.one_of_once(&[
