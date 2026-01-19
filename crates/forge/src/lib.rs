@@ -25,6 +25,7 @@ mod clean;
 mod combine_configs;
 mod compatibility_check;
 mod new;
+mod optimize_inlining;
 mod profile_validation;
 pub mod run_tests;
 pub mod scarb;
@@ -102,6 +103,11 @@ enum ForgeSubcommand {
     CheckRequirements,
     /// Generate completions script
     Completions(Completions),
+    /// Find optimal inlining-strategy value to minimize gas cost
+    OptimizeInlining {
+        #[command(flatten)]
+        args: optimize_inlining::OptimizeInliningArgs,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -131,7 +137,7 @@ enum ColorOption {
     Never,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[expect(clippy::struct_excessive_bools)]
 pub struct TestArgs {
     /// Name used to filter tests
@@ -239,7 +245,7 @@ impl TestArgs {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct ScarbArgs {
     #[command(flatten)]
     packages_filter: PackagesFilter,
@@ -335,6 +341,10 @@ pub fn main_execution(ui: Arc<UI>) -> Result<ExitStatus> {
         ForgeSubcommand::Completions(completions) => {
             generate_completions(completions.shell, &mut Cli::command())?;
             Ok(ExitStatus::Success)
+        }
+        ForgeSubcommand::OptimizeInlining { args } => {
+            check_requirements(false, &ui)?;
+            optimize_inlining::optimize_inlining(args, ui)
         }
     }
 }
