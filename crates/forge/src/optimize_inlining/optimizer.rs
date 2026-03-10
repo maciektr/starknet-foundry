@@ -9,13 +9,10 @@ use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Cell, ContentArrangement, Table};
 use foundry_ui::UI;
 use plotters::prelude::*;
-use plotters::style::{FontStyle, register_font};
 use scarb_api::metadata::Metadata;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-const ROBOTO_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
-const ROBOTO_FAMILY: &str = "roboto";
 
 pub struct Optimizer {
     pub min_threshold: u32,
@@ -217,18 +214,6 @@ impl Optimizer {
 
     #[allow(clippy::too_many_lines)]
     pub fn save_results_graph(&self, output_path: &Utf8Path, ui: &UI) -> Result<()> {
-        for style in [
-            FontStyle::Normal,
-            FontStyle::Bold,
-            FontStyle::Oblique,
-            FontStyle::Italic,
-        ] {
-            register_font(ROBOTO_FAMILY, style, ROBOTO_REGULAR)
-                .map_err(|_| anyhow!("Failed to register bundled Roboto-Regular.ttf font"))?;
-            register_font("sans-serif", style, ROBOTO_REGULAR)
-                .map_err(|_| anyhow!("Failed to register bundled Roboto-Regular.ttf font"))?;
-        }
-
         let mut sorted_results = self.valid_results()?;
 
         if sorted_results.len() < 2 {
@@ -276,7 +261,7 @@ impl Optimizer {
         root.fill(&WHITE)?;
 
         let mut chart = ChartBuilder::on(&root)
-            .caption("Inlining Optimization Results", (ROBOTO_FAMILY, 48))
+            .caption("Inlining Optimization Results", ("sans-serif", 48))
             .margin(40)
             .x_label_area_size(80)
             .y_label_area_size(100)
@@ -286,7 +271,7 @@ impl Optimizer {
             .configure_mesh()
             .x_desc("Threshold")
             .y_desc("Normalized Value")
-            .label_style((ROBOTO_FAMILY, 24))
+            .label_style(("sans-serif", 24))
             .x_label_formatter(&|x| format!("{x:.0}"))
             .y_label_formatter(&|y| format!("{y:.2}"))
             .draw()?;
@@ -318,7 +303,7 @@ impl Optimizer {
 
         chart
             .configure_series_labels()
-            .label_font((ROBOTO_FAMILY, 24))
+            .label_font(("sans-serif", 24))
             .legend_area_size(50)
             .background_style(WHITE.mix(0.8))
             .border_style(BLACK)
