@@ -142,10 +142,10 @@ impl RunForPackageArgs {
 }
 
 #[tracing::instrument(skip_all, level = "debug")]
-async fn test_package_with_config_resolved(
+fn test_package_with_config_resolved(
     test_targets: Vec<TestTargetRaw>,
     fork_targets: &[ForkTarget],
-    block_number_map: &mut BlockNumberMap,
+    block_number_map: &mut BlockNumberMap<'_>,
     forge_config: &ForgeConfig,
     tests_filter: &TestsFilter,
 ) -> Result<Vec<TestTargetWithResolvedConfig>> {
@@ -158,7 +158,7 @@ async fn test_package_with_config_resolved(
         )?;
 
         let test_target =
-            resolve_config(test_target, fork_targets, block_number_map, tests_filter).await?;
+            resolve_config(test_target, fork_targets, block_number_map, tests_filter)?;
 
         test_targets_with_resolved_config.push(test_target);
     }
@@ -198,7 +198,7 @@ fn sum_test_cases_from_test_target(
 }
 
 #[tracing::instrument(skip_all, level = "debug")]
-pub async fn run_for_package(
+pub fn run_for_package(
     RunForPackageArgs {
         test_targets,
         forge_config,
@@ -206,7 +206,8 @@ pub async fn run_for_package(
         fork_targets,
         package_name,
     }: RunForPackageArgs,
-    block_number_map: &mut BlockNumberMap,
+    block_number_map: &mut BlockNumberMap<'_>,
+    runtime: &tokio::runtime::Runtime,
     ui: Arc<UI>,
 ) -> Result<PackageTestResult> {
     let mut test_targets = test_package_with_config_resolved(
@@ -215,15 +216,14 @@ pub async fn run_for_package(
         block_number_map,
         &forge_config,
         &tests_filter,
-    )
-    .await?;
+    )?;
     let all_tests = sum_test_cases_from_package(&test_targets, &tests_filter.partitioning_config);
 
     for test_target in &mut test_targets {
         tests_filter.filter_tests(&mut test_target.test_cases)?;
     }
 
-    warn_if_incompatible_rpc_version(&test_targets, ui.clone()).await?;
+    warn_if_incompatible_rpc_version(&test_targets, ui.clone(), runtime)?;
 
     let not_filtered =
         sum_test_cases_from_package(&test_targets, &tests_filter.partitioning_config);
@@ -245,7 +245,7 @@ pub async fn run_for_package(
         ));
 
         let summary =
-            run_for_test_target(test_target, forge_config.clone(), &tests_filter, ui).await?;
+            run_for_test_target(test_target, forge_config.clone(), &tests_filter, ui)?;
 
         match summary {
             TestTargetRunResult::Ok(summary) => {

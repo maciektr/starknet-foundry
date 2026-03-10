@@ -13,9 +13,10 @@ use std::env;
 use std::sync::Arc;
 use url::Url;
 
-pub(crate) async fn warn_if_incompatible_rpc_version(
+pub(crate) fn warn_if_incompatible_rpc_version(
     test_targets: &[TestTargetWithResolvedConfig],
     ui: Arc<UI>,
+    runtime: &tokio::runtime::Runtime,
 ) -> Result<()> {
     let mut urls = HashSet::<Url>::new();
 
@@ -30,20 +31,23 @@ pub(crate) async fn warn_if_incompatible_rpc_version(
         }
     }
 
-    let mut handles = Vec::with_capacity(urls.len());
-
-    for url in urls {
-        let ui = ui.clone();
-        handles.push(tokio::spawn(async move {
-            let client = create_rpc_client(&url)?;
-
-            verify_and_warn_if_incompatible_rpc_version(&client, &url, &ui).await
-        }));
+    if urls.is_empty() {
+        return Ok(());
     }
 
-    for handle in handles {
-        handle.await??;
-    }
+    runtime.block_on(async {
+        let futures: Vec<_> = urls
+            .into_iter()
+            .map(|url| {
+                let ui = ui.clone();
+                async move {
+                    let client = create_rpc_client(&url)?;
+                    verify_and_warn_if_incompatible_rpc_version(&client, &url, &ui).await
+                }
+            })
+            .collect();
+        futures::future::try_join_all(futures).await
+    })?;
 
     Ok(())
 }

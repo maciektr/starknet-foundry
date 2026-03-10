@@ -42,8 +42,7 @@ use std::default::Default;
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
+use std::sync::atomic::{AtomicBool, Ordering};
 use universal_sierra_compiler_api::representation::RawCasmProgram;
 
 pub mod config_run;
@@ -66,33 +65,28 @@ pub fn run_test(
     casm_program: Arc<RawCasmProgram>,
     forge_config: Arc<ForgeConfig>,
     versioned_program_path: Arc<Utf8PathBuf>,
-    send: Sender<()>,
-) -> JoinHandle<TestCaseSummary<Single>> {
-    tokio::task::spawn_blocking(move || {
-        // Due to the inability of spawn_blocking to be abruptly cancelled,
-        // a channel is used to receive information indicating
-        // that the execution of the task is no longer necessary.
-        if send.is_closed() {
-            return TestCaseSummary::Interrupted {};
-        }
+    cancel: Arc<AtomicBool>,
+) -> TestCaseSummary<Single> {
+    if cancel.load(Ordering::Acquire) {
+        return TestCaseSummary::Interrupted {};
+    }
 
-        let run_result = case.try_into_program(&casm_program).and_then(|program| {
-            run_test_case(
-                &case,
-                &program,
-                &casm_program,
-                &RuntimeConfig::from(&forge_config.test_runner_config),
-                None,
-                &versioned_program_path,
-            )
-        });
+    let run_result = case.try_into_program(&casm_program).and_then(|program| {
+        run_test_case(
+            &case,
+            &program,
+            &casm_program,
+            &RuntimeConfig::from(&forge_config.test_runner_config),
+            None,
+            &versioned_program_path,
+        )
+    });
 
-        if send.is_closed() {
-            return TestCaseSummary::Interrupted {};
-        }
+    if cancel.load(Ordering::Acquire) {
+        return TestCaseSummary::Interrupted {};
+    }
 
-        extract_test_case_summary(run_result, &case, &forge_config, &versioned_program_path)
-    })
+    extract_test_case_summary(run_result, &case, &forge_config, &versioned_program_path)
 }
 
 #[tracing::instrument(skip_all, level = "debug")]
@@ -103,35 +97,27 @@ pub(crate) fn run_fuzz_test(
     casm_program: Arc<RawCasmProgram>,
     forge_config: Arc<ForgeConfig>,
     versioned_program_path: Arc<Utf8PathBuf>,
-    send: Sender<()>,
-    fuzzing_send: Sender<()>,
+    cancel: Arc<AtomicBool>,
+    fuzz_cancel: Arc<AtomicBool>,
     rng: Arc<Mutex<StdRng>>,
-) -> JoinHandle<TestCaseSummary<Single>> {
-    tokio::task::spawn_blocking(move || {
-        // Due to the inability of spawn_blocking to be abruptly cancelled,
-        // a channel is used to receive information indicating
-        // that the execution of the task is no longer necessary.
-        if send.is_closed() | fuzzing_send.is_closed() {
-            return TestCaseSummary::Interrupted {};
-        }
-        let run_result = run_test_case(
-            &case,
-            &program,
-            &casm_program,
-            &RuntimeConfig::from(&forge_config.test_runner_config),
-            Some(rng),
-            &versioned_program_path,
-        );
+) -> TestCaseSummary<Single> {
+    if cancel.load(Ordering::Acquire) || fuzz_cancel.load(Ordering::Acquire) {
+        return TestCaseSummary::Interrupted {};
+    }
+    let run_result = run_test_case(
+        &case,
+        &program,
+        &casm_program,
+        &RuntimeConfig::from(&forge_config.test_runner_config),
+        Some(rng),
+        &versioned_program_path,
+    );
 
-        // TODO: code below is added to fix snforge tests
-        // remove it after improve exit-first tests
-        // issue #1043
-        if send.is_closed() {
-            return TestCaseSummary::Interrupted {};
-        }
+    if cancel.load(Ordering::Acquire) {
+        return TestCaseSummary::Interrupted {};
+    }
 
-        extract_test_case_summary(run_result, &case, &forge_config, &versioned_program_path)
-    })
+    extract_test_case_summary(run_result, &case, &forge_config, &versioned_program_path)
 }
 
 pub enum RunStatus {

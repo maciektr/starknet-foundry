@@ -24,7 +24,6 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     thread::available_parallelism,
 };
-use tokio::runtime::Builder;
 
 pub mod block_number_map;
 mod clean;
@@ -332,12 +331,11 @@ pub fn main_execution(ui: Arc<UI>) -> Result<ExitStatus> {
             check_requirements(false, &ui)?;
 
             let cores = resolve_thread_count(args.max_threads, &ui);
-            let rt = Builder::new_multi_thread()
-                .max_blocking_threads(cores)
-                .enable_all()
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(cores)
                 .build()?;
 
-            rt.block_on(run_for_workspace(*args, ui))
+            pool.install(|| run_for_workspace(*args, ui))
         }
         ForgeSubcommand::CheckRequirements => {
             check_requirements(true, &ui)?;

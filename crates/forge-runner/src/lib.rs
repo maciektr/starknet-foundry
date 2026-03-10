@@ -9,8 +9,6 @@ use camino::Utf8PathBuf;
 use cheatnet::runtime_extensions::forge_config_extension::config::RawFuzzerConfig;
 use foundry_ui::UI;
 use foundry_ui::components::warning::WarningMessage;
-use futures::StreamExt;
-use futures::stream::FuturesUnordered;
 use package_tests::with_config_resolved::TestCaseWithResolvedConfig;
 use profiler_api::run_profiler;
 use rand::SeedableRng;
@@ -18,10 +16,9 @@ use rand::prelude::StdRng;
 use shared::spinner::Spinner;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use test_case_summary::{AnyTestCaseSummary, Fuzzing};
-use tokio::sync::mpsc::{Sender, channel};
-use tokio::task::JoinHandle;
 use universal_sierra_compiler_api::representation::RawCasmProgram;
 
 pub mod backtrace;
@@ -108,32 +105,26 @@ pub fn run_for_test_case(
     casm_program: Arc<RawCasmProgram>,
     forge_config: Arc<ForgeConfig>,
     versioned_program_path: Arc<Utf8PathBuf>,
-    send: Sender<()>,
-) -> JoinHandle<Result<AnyTestCaseSummary>> {
+    cancel: Arc<AtomicBool>,
+) -> Result<AnyTestCaseSummary> {
     if case.config.fuzzer_config.is_none() {
-        tokio::task::spawn(async move {
-            let res = run_test(
-                case,
-                casm_program,
-                forge_config,
-                versioned_program_path,
-                send,
-            )
-            .await?;
-            Ok(AnyTestCaseSummary::Single(res))
-        })
+        let res = run_test(
+            case,
+            casm_program,
+            forge_config,
+            versioned_program_path,
+            cancel,
+        );
+        Ok(AnyTestCaseSummary::Single(res))
     } else {
-        tokio::task::spawn(async move {
-            let res = run_with_fuzzing(
-                case,
-                casm_program,
-                forge_config.clone(),
-                versioned_program_path,
-                send,
-            )
-            .await??;
-            Ok(AnyTestCaseSummary::Fuzzing(res))
-        })
+        let res = run_with_fuzzing(
+            case,
+            casm_program,
+            forge_config,
+            versioned_program_path,
+            cancel,
+        )?;
+        Ok(AnyTestCaseSummary::Fuzzing(res))
     }
 }
 
@@ -143,83 +134,88 @@ fn run_with_fuzzing(
     casm_program: Arc<RawCasmProgram>,
     forge_config: Arc<ForgeConfig>,
     versioned_program_path: Arc<Utf8PathBuf>,
-    send: Sender<()>,
-) -> JoinHandle<Result<TestCaseSummary<Fuzzing>>> {
-    tokio::task::spawn(async move {
-        let test_runner_config = &forge_config.test_runner_config;
-        if send.is_closed() {
+    cancel: Arc<AtomicBool>,
+) -> Result<TestCaseSummary<Fuzzing>> {
+    let test_runner_config = &forge_config.test_runner_config;
+    if cancel.load(Ordering::Acquire) {
+        return Ok(TestCaseSummary::Interrupted {});
+    }
+
+    let (fuzzer_runs, fuzzer_seed) = match case.config.fuzzer_config {
+        Some(RawFuzzerConfig { runs, seed }) => (
+            runs.unwrap_or(test_runner_config.fuzzer_runs),
+            seed.unwrap_or(test_runner_config.fuzzer_seed),
+        ),
+        _ => (
+            test_runner_config.fuzzer_runs,
+            test_runner_config.fuzzer_seed,
+        ),
+    };
+
+    let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(fuzzer_seed)));
+    let fuzz_cancel = Arc::new(AtomicBool::new(false));
+
+    let program = case.try_into_program(&casm_program)?;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    rayon::scope(|s| {
+        for _ in 1..=fuzzer_runs.get() {
+            let tx = tx.clone();
+            let case = case.clone();
+            let program = program.clone();
+            let casm_program = casm_program.clone();
+            let forge_config = forge_config.clone();
+            let versioned_program_path = versioned_program_path.clone();
+            let cancel = cancel.clone();
+            let fuzz_cancel = fuzz_cancel.clone();
+            let rng = rng.clone();
+            s.spawn(move |_| {
+                let result = run_fuzz_test(
+                    case,
+                    program,
+                    casm_program,
+                    forge_config,
+                    versioned_program_path,
+                    cancel,
+                    fuzz_cancel,
+                    rng,
+                );
+                let _ = tx.send(result);
+            });
+        }
+        drop(tx);
+    });
+
+    let mut results = vec![];
+    for result in rx {
+        results.push(result.clone());
+        if let TestCaseSummary::Failed { .. } = result {
+            fuzz_cancel.store(true, Ordering::Release);
+        }
+    }
+
+    let runs = u32::try_from(
+        results
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    TestCaseSummary::Passed { .. } | TestCaseSummary::Failed { .. }
+                )
+            })
+            .count(),
+    )?;
+
+    let fuzzing_run_summary: TestCaseSummary<Fuzzing> = TestCaseSummary::from(results);
+
+    if let TestCaseSummary::Passed { .. } = fuzzing_run_summary {
+        if runs != fuzzer_runs.get() {
             return Ok(TestCaseSummary::Interrupted {});
         }
+    }
 
-        let (fuzzing_send, mut fuzzing_rec) = channel(1);
-
-        let (fuzzer_runs, fuzzer_seed) = match case.config.fuzzer_config {
-            Some(RawFuzzerConfig { runs, seed }) => (
-                runs.unwrap_or(test_runner_config.fuzzer_runs),
-                seed.unwrap_or(test_runner_config.fuzzer_seed),
-            ),
-            _ => (
-                test_runner_config.fuzzer_runs,
-                test_runner_config.fuzzer_seed,
-            ),
-        };
-
-        let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(fuzzer_seed)));
-
-        let mut tasks = FuturesUnordered::new();
-
-        let program = case.try_into_program(&casm_program)?;
-
-        for _ in 1..=fuzzer_runs.get() {
-            tasks.push(run_fuzz_test(
-                case.clone(),
-                program.clone(),
-                casm_program.clone(),
-                forge_config.clone(),
-                versioned_program_path.clone(),
-                send.clone(),
-                fuzzing_send.clone(),
-                rng.clone(),
-            ));
-        }
-
-        let mut results = vec![];
-        while let Some(task) = tasks.next().await {
-            let result = task?;
-
-            results.push(result.clone());
-
-            if let TestCaseSummary::Failed { .. } = result {
-                fuzzing_rec.close();
-                break;
-            }
-        }
-
-        let runs = u32::try_from(
-            results
-                .iter()
-                .filter(|item| {
-                    matches!(
-                        item,
-                        TestCaseSummary::Passed { .. } | TestCaseSummary::Failed { .. }
-                    )
-                })
-                .count(),
-        )?;
-
-        let fuzzing_run_summary: TestCaseSummary<Fuzzing> = TestCaseSummary::from(results);
-
-        if let TestCaseSummary::Passed { .. } = fuzzing_run_summary {
-            // Because we execute tests parallel, it's possible to
-            // get Passed after Skipped. To treat fuzzing a test as Passed
-            // we have to ensure that all fuzzing subtests Passed
-            if runs != fuzzer_runs.get() {
-                return Ok(TestCaseSummary::Interrupted {});
-            }
-        }
-
-        Ok(fuzzing_run_summary)
-    })
+    Ok(fuzzing_run_summary)
 }
 
 #[expect(clippy::implicit_hasher)]

@@ -20,10 +20,10 @@ use forge_runner::{
 use starknet_api::block::BlockNumber;
 
 #[tracing::instrument(skip_all, level = "debug")]
-pub async fn resolve_config(
+pub fn resolve_config(
     test_target: TestTargetWithConfig,
     fork_targets: &[ForkTarget],
-    block_number_map: &mut BlockNumberMap,
+    block_number_map: &mut BlockNumberMap<'_>,
     tests_filter: &TestsFilter,
 ) -> Result<TestTargetWithResolvedConfig> {
     let mut test_cases = Vec::with_capacity(test_target.test_cases.len());
@@ -41,8 +41,7 @@ pub async fn resolve_config(
                 ignored: case.config.ignored
                     || (env_ignore_fork_tests && case.config.fork_config.is_some()),
                 fork_config: if should_be_run {
-                    resolve_fork_config(case.config.fork_config, block_number_map, fork_targets)
-                        .await?
+                    resolve_fork_config(case.config.fork_config, block_number_map, fork_targets)?
                 } else {
                     None
                 },
@@ -62,9 +61,9 @@ pub async fn resolve_config(
     })
 }
 
-async fn resolve_fork_config(
+fn resolve_fork_config(
     fork_config: Option<RawForkConfig>,
-    block_number_map: &mut BlockNumberMap,
+    block_number_map: &mut BlockNumberMap<'_>,
     fork_targets: &[ForkTarget],
 ) -> Result<Option<ResolvedForkConfig>> {
     let Some(fc) = fork_config else {
@@ -79,13 +78,11 @@ async fn resolve_fork_config(
         BlockId::BlockNumber(block_number) => BlockNumber(block_number),
         BlockId::BlockHash(hash) => {
             block_number_map
-                .get_block_number_for_hash(url.clone(), hash)
-                .await?
+                .get_block_number_for_hash(url.clone(), hash)?
         }
         BlockId::BlockTag => {
             block_number_map
-                .get_latest_block_number(url.clone())
-                .await?
+                .get_latest_block_number(url.clone())?
         }
     };
 
@@ -205,8 +202,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn to_runnable_non_existent_id() {
+    #[test]
+    fn to_runnable_non_existent_id() {
         let mocked_tests = create_test_target_with_cases(vec![create_test_case_with_config(
             "crate1::do_thing",
             false,
@@ -232,16 +229,15 @@ mod tests {
                     "https://not_taken.com",
                     BlockId::BlockNumber(120)
                 )],
-                &mut BlockNumberMap::default(),
+                &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
                 &tests_filter,
             )
-            .await
             .is_err()
         );
     }
 
-    #[tokio::test]
-    async fn test_ignored_filter_skips_fork_config_resolution() {
+    #[test]
+    fn test_ignored_filter_skips_fork_config_resolution() {
         let ignored_test = create_test_case_with_config(
             "ignored_test",
             true,
@@ -265,10 +261,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &[],
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);
@@ -276,8 +271,8 @@ mod tests {
         assert!(resolved.test_cases[0].config.fork_config.is_none());
     }
 
-    #[tokio::test]
-    async fn test_non_ignored_filter_resolves_fork_config() {
+    #[test]
+    fn test_non_ignored_filter_resolves_fork_config() {
         let test_case = create_test_case_with_config(
             "valid_test",
             false,
@@ -306,10 +301,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);
@@ -321,8 +315,8 @@ mod tests {
         assert_eq!(fork_config.block_number.0, 100);
     }
 
-    #[tokio::test]
-    async fn test_name_filtered_test_still_resolves_fork_config() {
+    #[test]
+    fn test_name_filtered_test_still_resolves_fork_config() {
         let test_case = create_test_case_with_config(
             "filtered_out_test",
             false,
@@ -351,10 +345,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);
@@ -366,8 +359,8 @@ mod tests {
         assert_eq!(fork_config.block_number.0, 100);
     }
 
-    #[tokio::test]
-    async fn test_mixed_scenarios_with_ignored_filter() {
+    #[test]
+    fn test_mixed_scenarios_with_ignored_filter() {
         let test_cases = vec![
             create_test_case_with_config(
                 "ignored_with_valid_fork",
@@ -408,10 +401,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 4);
@@ -441,8 +433,8 @@ mod tests {
         assert!(no_fork_test.config.fork_config.is_none());
     }
 
-    #[tokio::test]
-    async fn test_only_ignored_filter_skips_non_ignored_fork_resolution() {
+    #[test]
+    fn test_only_ignored_filter_skips_non_ignored_fork_resolution() {
         let test_cases = vec![
             create_test_case_with_config(
                 "ignored_test",
@@ -477,10 +469,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 2);
@@ -498,8 +489,8 @@ mod tests {
         assert!(non_ignored_test.config.fork_config.is_none());
     }
 
-    #[tokio::test]
-    async fn test_include_ignored_filter_resolves_all_fork_configs() {
+    #[test]
+    fn test_include_ignored_filter_resolves_all_fork_configs() {
         let test_cases = vec![
             create_test_case_with_config(
                 "ignored_test",
@@ -535,10 +526,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 2);
@@ -559,8 +549,8 @@ mod tests {
         assert!(!non_ignored_test.config.ignored);
     }
 
-    #[tokio::test]
-    async fn test_fork_config_resolution_with_inline_config() {
+    #[test]
+    fn test_fork_config_resolution_with_inline_config() {
         let test_case = create_test_case_with_config(
             "test_with_inline_fork",
             false,
@@ -585,10 +575,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &[],
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);
@@ -602,8 +591,8 @@ mod tests {
         assert_eq!(fork_config.block_number.0, 123);
     }
 
-    #[tokio::test]
-    async fn test_overridden_fork_config_resolution() {
+    #[test]
+    fn test_overridden_fork_config_resolution() {
         let test_case = create_test_case_with_config(
             "test_with_overridden_fork",
             false,
@@ -634,10 +623,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);
@@ -649,8 +637,8 @@ mod tests {
         assert_eq!(fork_config.block_number.0, 999);
     }
 
-    #[tokio::test]
-    async fn test_skip_filter_does_not_affect_fork_resolution() {
+    #[test]
+    fn test_skip_filter_does_not_affect_fork_resolution() {
         let test_case = create_test_case_with_config(
             "test_to_be_skipped",
             false,
@@ -679,10 +667,9 @@ mod tests {
         let resolved = resolve_config(
             test_target,
             &fork_targets,
-            &mut BlockNumberMap::default(),
+            &mut BlockNumberMap::new(&tokio::runtime::Runtime::new().unwrap()),
             &tests_filter,
         )
-        .await
         .unwrap();
 
         assert_eq!(resolved.test_cases.len(), 1);

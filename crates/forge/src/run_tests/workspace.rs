@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 #[tracing::instrument(skip_all, level = "debug")]
 #[allow(clippy::too_many_lines)]
-pub async fn run_for_workspace(args: TestArgs, ui: Arc<UI>) -> Result<ExitStatus> {
+pub fn run_for_workspace(args: TestArgs, ui: Arc<UI>) -> Result<ExitStatus> {
     let deterministic_output = args.deterministic_output;
     match args.color {
         // SAFETY: This runs in a single-threaded environment.
@@ -76,7 +76,8 @@ pub async fn run_for_workspace(args: TestArgs, ui: Arc<UI>) -> Result<ExitStatus
         args.no_optimization,
     )?;
 
-    let mut block_number_map = BlockNumberMap::default();
+    let rpc_runtime = tokio::runtime::Runtime::new()?;
+    let mut block_number_map = BlockNumberMap::new(&rpc_runtime);
     let mut all_tests = vec![];
     let mut total_filtered_count = Some(0);
 
@@ -100,7 +101,7 @@ pub async fn run_for_workspace(args: TestArgs, ui: Arc<UI>) -> Result<ExitStatus
             &ui,
         )?;
 
-        let result = run_for_package(args, &mut block_number_map, ui.clone()).await?;
+        let result = run_for_package(args, &mut block_number_map, &rpc_runtime, ui.clone())?;
 
         let filtered = result.filtered();
         all_tests.extend(result.summaries());

@@ -10,9 +10,8 @@ use forge_runner::{
     test_target_summary::TestTargetSummary,
 };
 use foundry_ui::UI;
-use futures::{StreamExt, stream::FuturesUnordered};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc::channel;
 
 #[non_exhaustive]
 pub enum TestTargetRunResult {
@@ -21,7 +20,7 @@ pub enum TestTargetRunResult {
 }
 
 #[tracing::instrument(skip_all, level = "debug")]
-pub async fn run_for_test_target(
+pub fn run_for_test_target(
     tests: TestTargetWithResolvedConfig,
     forge_config: Arc<ForgeConfig>,
     tests_filter: &impl TestCaseFilter,
@@ -29,46 +28,71 @@ pub async fn run_for_test_target(
 ) -> Result<TestTargetRunResult> {
     let casm_program = tests.casm_program.clone();
 
-    let mut tasks = FuturesUnordered::new();
-    // Initiate two channels to manage the `--exit-first` flag.
-    // Owing to `cheatnet` fork's utilization of its own Tokio runtime for RPC requests,
-    // test execution must occur within a `tokio::spawn_blocking`.
-    // As `spawn_blocking` can't be prematurely cancelled (refer: https://dtantsur.github.io/rust-openstack/tokio/task/fn.spawn_blocking.html),
-    // a channel is used to signal the task that test processing is no longer necessary.
-    let (send, mut rec) = channel(1);
+    let cancel = Arc::new(AtomicBool::new(false));
 
-    for case in tests.test_cases {
-        let case_name = case.name.clone();
-        let filter_result = tests_filter.filter(&case);
+    let (tx, rx) = std::sync::mpsc::channel();
 
-        match filter_result {
-            FilterResult::Excluded(reason) => match reason {
-                ExcludeReason::ExcludedFromPartition => {
-                    tasks.push(tokio::task::spawn(async {
-                        Ok(AnyTestCaseSummary::Single(
+    enum FilteredCase {
+        ExcludedFromPartition,
+        Ignored(String),
+        Included(forge_runner::package_tests::with_config_resolved::TestCaseWithResolvedConfig),
+    }
+
+    let filtered_cases: Vec<_> = tests
+        .test_cases
+        .into_iter()
+        .map(|case| {
+            let filter_result = tests_filter.filter(&case);
+            match filter_result {
+                FilterResult::Excluded(reason) => match reason {
+                    ExcludeReason::ExcludedFromPartition => FilteredCase::ExcludedFromPartition,
+                    ExcludeReason::Ignored => FilteredCase::Ignored(case.name.clone()),
+                },
+                FilterResult::Included => FilteredCase::Included(case),
+            }
+        })
+        .collect();
+
+    rayon::scope(|s| {
+        for case in filtered_cases {
+            match case {
+                FilteredCase::ExcludedFromPartition => {
+                    let tx = tx.clone();
+                    s.spawn(move |_| {
+                        let _ = tx.send(Ok(AnyTestCaseSummary::Single(
                             TestCaseSummary::ExcludedFromPartition {},
-                        ))
-                    }));
+                        )));
+                    });
                 }
-                ExcludeReason::Ignored => {
-                    tasks.push(tokio::task::spawn(async {
-                        Ok(AnyTestCaseSummary::Single(TestCaseSummary::Ignored {
-                            name: case_name,
-                        }))
-                    }));
+                FilteredCase::Ignored(name) => {
+                    let tx = tx.clone();
+                    s.spawn(move |_| {
+                        let _ = tx.send(Ok(AnyTestCaseSummary::Single(
+                            TestCaseSummary::Ignored { name },
+                        )));
+                    });
                 }
-            },
-            FilterResult::Included => {
-                tasks.push(run_for_test_case(
-                    Arc::new(case),
-                    casm_program.clone(),
-                    forge_config.clone(),
-                    tests.sierra_program_path.clone(),
-                    send.clone(),
-                ));
+                FilteredCase::Included(case) => {
+                    let tx = tx.clone();
+                    let casm_program = casm_program.clone();
+                    let forge_config = forge_config.clone();
+                    let sierra_program_path = tests.sierra_program_path.clone();
+                    let cancel = cancel.clone();
+                    s.spawn(move |_| {
+                        let result = run_for_test_case(
+                            Arc::new(case),
+                            casm_program,
+                            forge_config,
+                            sierra_program_path,
+                            cancel,
+                        );
+                        let _ = tx.send(result);
+                    });
+                }
             }
         }
-    }
+        drop(tx);
+    });
 
     let mut results = vec![];
     let mut saved_trace_data_paths = vec![];
@@ -84,10 +108,9 @@ pub async fn run_for_test_target(
         ui.println(&test_result_message);
     };
 
-    while let Some(task) = tasks.next().await {
-        let result = task??;
+    for result in rx {
+        let result = result?;
 
-        // Skip printing; Print all results at once in a sorted order once they are available
         if !deterministic_output && should_print_test_result_message(&result) {
             print_test_result(&result);
         }
@@ -102,7 +125,7 @@ pub async fn run_for_test_target(
 
         if result.is_failed() && forge_config.test_runner_config.exit_first {
             interrupted = true;
-            rec.close();
+            cancel.store(true, Ordering::Release);
         }
 
         results.push(result);
